@@ -1,10 +1,10 @@
 ---
-title: "User Rides"
+title: "Executive Dashboard"
 output: 
   flexdashboard::flex_dashboard:
     orientation: rows
     social: menu
-    source_code: https://git.io/vaZdx
+    visit_us: https://git.io/vaZdx
     theme: flatly
 runtime: shiny
 ---
@@ -16,7 +16,11 @@ library(tidyverse)
 library(ggplot2)
 library(bbplot)
 library(tidyquant)
-
+library(rvest)
+library(ggthemes)
+library(r2d3)
+stocks <- 
+read_csv('https://raw.githubusercontent.com/datasets/s-and-p-500-companies-financials/master/data/constituents.csv')
 
 
 # Access to CRAN packages data stream
@@ -41,29 +45,40 @@ Sidebar {.sidebar}
 Lorem ipsum
 [jcheng5/cransim](https://github.com/jcheng5/cransim).
 
+<style type="text/css"> .sidebar { overflow: auto; } </style>
 
 ```{r}
 # Rate at which to flag high download traffic
-sliderInput("rateThreshold", "Warn when rate exceeds:",
-            min = 0, max = 50, value = 3, step = 0.1
-)
+# sliderInput("rateThreshold", "Warn when rate exceeds:",
+#             min = 0, max = 50, value = 3, step = 0.1
+# )
 
 # Maximum number of raw data rows to keep
 numericInput("maxrows", "Recent downloads window:", 50)
 
+dateRangeInput("daterange1", "Date range:",
+                 start = Sys.Date() - 362,
+                 end   = Sys.Date())
+
 selectizeInput(inputId = 'tickers', 
                label = 'tickers', 
-               choices = c('AAPL', 'AMZN', 'BOA'), 
-               selected = c('AAPL', 'AMZN'), 
-               multiple = TRUE,
+               choices = stocks$Symbol, 
+               selected = c('AAPL'), 
+               multiple = FALSE,
                options = NULL)
+
 ```
 
 
 ```{r}
 
 clean_stock_data <- reactive({
-  stocks <- tidyquant::tq_get(input$tickers, complete_cases = TRUE)
+  stocks <- tidyquant::tq_get(
+    c(input$tickers, 'SPY', 'DJI', 'AKRX'), 
+    complete_cases = TRUE, 
+    from = input$daterange1[[1]], 
+    to = input$daterange1[[2]]
+  )
 
 clean_stock_data <- 
   stocks %>% 
@@ -72,11 +87,32 @@ clean_stock_data <-
   mutate(diff = (close - lead(close))/lead(close))
 })
 
+
 pivoted_stock_data <- reactive({
   clean_stock_data() %>% 
   select(symbol, diff, date) %>% 
   pivot_wider(names_from = symbol, values_from = diff) %>% 
   filter(complete.cases(.))
+})
+
+correl <- reactive({
+  pivoted_stock_data() %>% 
+    select(-date) %>% 
+    cor
+})
+
+sigma_stock <- reactive({
+  pivoted_stock_data() %>% 
+    .[,2] %>% 
+    unlist %>% 
+    sd
+})
+
+sigma_market <- reactive({
+  pivoted_stock_data() %>% 
+    .[,3] %>% 
+    unlist %>% 
+    sd
 })
 ```
 
@@ -87,42 +123,57 @@ Dashboard
 Row 
 -----------------------------------------------------------------------
 
-### Downloads per sec (last 5 min) {.value-box}
+### Correlation
 
 ```{r}
-# downloadRate is a reactive expression that computes the download
-# rate during this dashboard's lifetime.
-startTime <- as.numeric(Sys.time())
-downloadRate <- reactive({
-  elapsed <- as.numeric(Sys.time()) - startTime
-  nrow(pkgData()) / min(maxAgeSecs, elapsed)
-})
-
 # Emit the download rate
 renderValueBox({
-  rate <- formatC(downloadRate(), digits = 1, format = "f")
+  value <- round(correl()[[3]], 2)
   valueBox(
-    value = rate,
+    value = value,
     icon = "fa-area-chart",
-    color = if (rate >= input$rateThreshold) "warning" else "primary"
+    color = if (value >= .5) "warning" else "primary"
   )
 })
 ```
 
-### Unique users {.value-box} 
+### Alpha
 
 ```{r}
-# usrCount is a reactive expression that keeps an approximate
-# count of all of the unique users that have been seen since the
-# app started.
-usrCount <- userCount(pkgStream)
-
-# Emit the user count
+# Emit the download rate
 renderValueBox({
-  valueBox(value = usrCount(), icon = "fa-users")
+  valueBox(
+    value = 1.32,
+    icon = "fa-area-chart",
+    color = if (1.32 <= .5) "warning" else "primary"
+  )
 })
 ```
 
+
+### Beta {.value-box} 
+
+```{r}
+# Emit the download rate
+renderValueBox({
+  value <- round(correl()[[3]], 2)
+  valueBox(
+    value = round(value*sigma_stock()/sigma_market(), 2),
+    icon = "fa-area-chart",
+    color = if (value <= .5) "warning" else "primary"
+  )
+})
+```
+
+
+### Cap
+```{r}
+renderGauge({
+  gauge(42, min = 0, max = 100, symbol = '%', gaugeSectors(
+  success = c(80, 100), warning = c(40, 79), danger = c(0, 39)
+))
+})
+```
 
 ### Unique users {.value-box}
 
@@ -138,72 +189,89 @@ renderValueBox({
 })
 ```
 
-Row {data-height=650}
+Row {data-height=450}
 -----------------------------------------------------------------------
 
-### Stock over time
+### Market Comparison {data-width=450}
 ```{r}
 renderPlot({
   ggplot(clean_stock_data()) + 
-    aes(x = date, y = close, colour = symbol) + 
+    aes(x = date, y = close) + 
     geom_line() +
-    bbc_style()
+    facet_wrap(. ~ symbol, scales = 'free_y') +
+    theme(axis.text.x=element_text(angle=45,hjust=1)) +
+    theme_tq() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
 })
 ```
 
 
-### Value of Household Content vs. Building  
+### Codecov Breakout {data-width=640}
+
+```{r}
+r2d3(data = jsonlite::read_json("flare.json"), d3_version = 4, script = "treemap.js")
+```
+
+### Daily Return v. Market
 ```{r}
 renderPlot({
+  print(pivoted_stock_data())
   pivoted_stock_data() %>% 
     ggplot() +
-    aes(x = AAPL, y = AMZN) +
-    # geom_density_2d(alpha = 1) +
-    geom_point(alpha = 1, size = .05) +
-    geom_smooth(se = FALSE) +
-    xlim(-.05, .05) +
-    ylim(-.05, .05) +
-    bbc_style()
+    aes(x = SPY, y = !!sym(input$tickers)) +
+    geom_density_2d(alpha = .4) +
+    geom_point(alpha = 1, size = .5) +
+    geom_smooth(method = lm, se = FALSE) +
+    geom_vline(xintercept = 0, alpha = .3) +
+    geom_hline(yintercept = 0, alpha = .3) +
+    theme_tq()
+    # xlim(-.05, .05) +
+    # ylim(-.05, .05) # +
+    # bbc_style()
 })
 ```
 
-Column {data-width=400}
--------------------------------------
+<!-- Column {data-width=400} -->
+<!-- ------------------------------------- -->
 
-### Total downloads {.value-box}
-```{r}
-gauge(50, min = 0, max = 100, symbol = '%', gaugeSectors(
-  success = c(80, 100), warning = c(40, 79), danger = c(0, 39)
-))
-```
+<!-- ### Total downloads {.value-box} -->
+<!-- ```{r} -->
+<!-- gauge(50, min = 0, max = 100, symbol = '%', gaugeSectors( -->
+<!--   success = c(80, 100), warning = c(40, 79), danger = c(0, 39) -->
+<!-- )) -->
+<!-- ``` -->
 
-### Total downloads {.value-box}
-```{r}
-gauge(50, min = 0, max = 100, symbol = '%', gaugeSectors(
-  success = c(80, 100), warning = c(40, 79), danger = c(0, 39)
-))
-```
+<!-- ### Total downloads {.value-box} -->
+<!-- ```{r} -->
+<!-- gauge(50, min = 0, max = 100, symbol = '%', gaugeSectors( -->
+<!--   success = c(80, 100), warning = c(40, 79), danger = c(0, 39) -->
+<!-- )) -->
+<!-- ``` -->
 
 
 
-Row 
+Row {data-height=650}
 -----------------------------------------------------------------------
 
-### Percent of downloads (last 5 min) {data-width=340}
+### Percent of downloads (last 5 min) {data-width=440}
 
 ```{r}
-renderTable({
-  pkgData() %>%
-    group_by(package) %>%
-    tally() %>%
-    arrange(desc(n), tolower(package)) %>%
-    mutate(percentage = n / nrow(pkgData()) * 100) %>%
-    select("Package" = package, "Percent" = percentage) %>%
-    as.data.frame() %>%
-    head(30)
-}, digits = 1)
-
+renderD3({
+  r2d3(data = read.csv("dji-latest.csv"), 
+     d3_version = 4, 
+     container = "div", 
+     options = list(start = 2006, end = 2011), 
+     script = "calendar.js")
+})
 ```
+
+### Processing - last 60 hours
+```{r}
+renderD3({
+r2d3(d3_version = 4, script = "stackedbars.js")
+})
+```
+
 
 
 Recent Downloads
@@ -214,7 +282,21 @@ Recent Downloads
 ```{r}
 renderTable({
   downloads <- tail(pkgData(), n = input$maxrows)
-  downloads <- downloads[,c("date", "time", "size", "r_version", 
+  downloads <- downloads[,c("date", "time", "size", "r_version",
+                            "r_arch", "r_os", "package")]
+  downloads[order(nrow(downloads):1),]
+})
+```
+
+Team Structure
+=======================================================================
+
+### Recent Downlads
+
+```{r}
+renderTable({
+  downloads <- tail(pkgData(), n = input$maxrows)
+  downloads <- downloads[,c("date", "time", "size", "r_version",
                             "r_arch", "r_os", "package")]
   downloads[order(nrow(downloads):1),]
 })
