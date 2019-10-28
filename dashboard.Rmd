@@ -133,6 +133,17 @@ selectizeInput(inputId = 'tickers',
                multiple = FALSE,
                options = NULL)
 
+fileInput("file1", "Upload Report",
+        accept = c(
+          "text/csv",
+          "text/comma-separated-values,text/plain",
+          ".csv")
+        )
+
+textAreaInput("caption", "Caption", "Data Summary", width = "1000px")
+  verbatimTextOutput("value")
+passwordInput("password", "Password:")
+
 ```
 
 
@@ -312,7 +323,7 @@ p <- plot_ly(
   text = ~paste("Price: ", price, '$<br>Cut:', cut),
   color = ~carat, 
   size = ~carat,
-  opacity = .3
+  opacity = .8
 )
 p
 })
@@ -487,7 +498,10 @@ Team Structure
 =======================================================================
 
 Messages
-
 =======================================================================
 
+Calendar
+=======================================================================
 
+News
+=======================================================================
